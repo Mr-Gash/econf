@@ -1,6 +1,6 @@
 __This is a work in progress and currently not functional.__
 
-# Easy Config
+# Easy Configs
 
 Rather than creating an addon_config.lua file that you expect the end-user to modify to fit their needs, and then having it replaced every time they update your addon, this allows easy editing of config values in-game and automatic saving/loading/logging of said configs.
 
@@ -26,7 +26,7 @@ hook.Add( "PlayerSay", "Text Chat Disable", function( ply, text )
 	if not addon.config.get( "keyboards" ) then ply:PrintMessage( HUD_PRINTTALK, "Nooo!" ) return "" end
 end )
 ```
-In the above, the second argument to econf.setup is the generic "can edit" for the config package. The shown function is the default behavior.
+In the above, the second argument to econf.setupConfig is the generic "can edit" for the config package. The shown function is the default behavior.
 
 ---
 
@@ -37,7 +37,8 @@ In the above, the second argument to econf.setup is the generic "can edit" for t
 econf.setupConfig( string PackageName[, function CanEdit, bool Logging ] )
 ```
 	CanEdit is a generic function for the entire config package to see if a user can edit the config values.
-	If this isn't defined, any SuperAdmin can edit any config added to this config package unless otherwise specified.
+	If a config has its own can_edit function defined, it is used instead of this.
+	If this isn't defined, the default behavior is set to only allow SuperAdmins to edit configs.
 
 	If Logging is true, changes to all config values will be saved to /data/packageName/CURRENT_DATE.txt.
 	However, the logging value set on each config value is more important than this.
@@ -68,6 +69,7 @@ config.add( string ConfigID, vararg Default, table Data[, table LimitedList ] )
 			Note that this value is still sent to any clients that are allowed to edit it
 			when they request it (such as by openening an editor menu)
 		[func] can_edit - check to see if the user can edit this specific config. return true/false.
+			This function is used instead of the config-package "can edit" function if it is defined.
 		[func] on_edit - this function is called on edit, first with the player who edited it and second with the new value.
 		[bool] logging - If this is set to true, all changes of this will be logged to /data/packageName/CURRENT_DATE.txt
 
