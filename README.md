@@ -91,6 +91,8 @@ config.add( string ConfigID, vararg Default, table Data[, table LimitedList ] )
 			-- Only ints if decimal is false, otherwise a number of the amount of decimal places.
 			decimal = false
 
+	Returns a table which has a "get" function as a shortcut for config.get( ConfigID )
+
 ---
 ```
 config.get( string ConfigID )
@@ -101,14 +103,14 @@ config.get( string ConfigID )
 ```
 config.getAll()
 ```
-	Returns a table of all configs.
-	Note that this returns the configs with all of their econf-related data, not just their values.
+	Returns a table of all configs. Note that this returns the configs with all of their econf-related data, not just their values.
 
 ---
 ```
 config.set( string ConfigID, configtype Value, Player Editor )
 ```
-	Sets, saves, and logs a config change. Note that logging does not work properly if you feed it a table.
+	Sets, saves, and logs a config change.
+	Note that logging does not work properly if you feed it a table.
 
 ---
 ```
