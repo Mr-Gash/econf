@@ -8,7 +8,7 @@ Example functionality:
 ```Lua
 -- shared:
 addon = { someData = 124312, thingeroo = "afsqae" }
-addon.config = econf.setup( "my_supercool_addon", function( ply ) return ply:IsSuperAdmin() end, true )
+addon.config = econf.setupConfig( "my_supercool_addon", function( ply ) return ply:IsSuperAdmin() end, true )
 
 addon.config.add( "keyboards", true, {
 	name = "Text Chat",
