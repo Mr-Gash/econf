@@ -4,7 +4,36 @@
 	View readme.md for functionality and example.
 ]]
 
+-- So, I never knew that in a module, you have to
+-- localize everything inside _G you're going to use.
+-- gmod lua 5.3 when
+
+-- Goddamn modules
+local os = os
+local net = net
+local sql = sql
+local math = math
+local hook = hook
+local util = util
+local file = file
+local table = table
+local string = string
+
+-- "Goddamn modules" part 2.
+local type = type
+local error = error
+local SQLStr = SQLStr
+local IsColor = IsColor
+local IsValid = IsValid
+local tostring = tostring
+
+-- Goddamn modules: Revenge of the Sith
+local CLIENT = CLIENT
+local SERVER = SERVER
+
 module( "econf" )
+
+_VERSION = 1
 packages = {} -- We're going to store each new config package here.
 
 --[[
@@ -20,18 +49,18 @@ if SERVER then
 
 	function saveData( package, confid, value )
 		if not packages[ package ] then return error( "package not initialized (" .. tostring(package) .. ")" ) end
-		if not packages[ package ][ confid ] then return error( "config does not exist (" .. package .. " / " .. tostring(confid) .. ")" ) end
+		if not packages[ package ][ "configs" ][ confid ] then return error( "config does not exist (" .. package .. "/" .. tostring(confid) .. ")" ) end
 
 		-- Gonna use json here to keep track of what type of data it is. Blah.
 		sql.Query( "REPLACE INTO econf_" .. package .. " ( confid, value ) VALUES ( " .. SQLStr(confid) .. ", " .. SQLStr(util.TableToJSON( {value} )) .. " );")
 	end
 
-	function loadData( package, confid )
-		if not packages[ package ] then return error( "package not initialized (" .. tostring(package) .. ")" ) end
-		if not packages[ package ][ confid ] then return error( "config does not exist (" .. package .. " / " .. tostring(confid) .. ")" ) end
+	function loadData( package, confid, default )
+		if not packages[ package ] then return default ~= nil and default or error( "package not initialized (" .. tostring(package) .. ")" ) end
+		if not packages[ package ][ "configs" ][ confid ] then return default ~= nil and default or error( "config does not exist (" .. package .. "/" .. tostring(confid) .. ")" ) end
 
 		local data = sql.QueryValue( "SELECT value FROM econf_" .. package .. " WHERE confid = " .. SQLStr(confid) .. " LIMIT 1;" )
-		if not data then return packages[ package ][ confid ][ "default" ] end
+		if not data then return default ~= nil and default or packages[ package ][ "configs" ][ confid ][ "default" ] end
 
 		return util.JSONToTable( data )
 	end
@@ -109,6 +138,13 @@ local function Discipline( conf, value )
 	return value
 end
 
+local function valueCollar( package, data, value )
+	value = Discipline( data, value )
+	if value == nil then return error( "discipline check failed on given config (" .. package .. "/" .. data.id ")" ) end
+
+	return value
+end
+
 local function GenericCheck( ply )
 	return ply:IsSuperAdmin()
 end
@@ -132,7 +168,7 @@ function addConfig( package, confid, default, data )
 
 	packages[ package ][ "configs" ][ confid ] = info
 
-	info.value = SERVER and loadData( package, confid ) or default
+	info.value = SERVER and loadData( package, confid, default ) or default
 	-- We'll send the client when it requests it in InitPostEntity.
 
 	return { get = function() return getConfig( package, confid ) end }
@@ -143,13 +179,9 @@ end
 	Optional third argument errors if the argument type passed does not match config.type
 ]]
 function getData( package, confid, check )
-	if not packages[ package ] then return error( "package not initialized (" .. tostring(package) .. ")" ) end
-	if not packages[ package ][ "configs" ][ confid ] then return error( "config does not exist (" .. package .. "/" .. tostring(confid) .. ")" ) end
-	if check ~= nil then
-		if GetType( check ) ~= packages[ package ][ "configs" ][ confid ] then
-			return error( "type mismatch" )
-		end
-	end
+	-- Should I even bother checking these manually? The only benefit is nicer error messages for people who fuck up.
+	--if not packages[ package ] then return error( "package not initialized (" .. tostring(package) .. ")" ) end
+	--if not packages[ package ][ "configs" ][ confid ] then return error( "config does not exist (" .. package .. "/" .. tostring(confid) .. ")" ) end
 
 	return packages[ package ][ "configs" ][ confid ]
 end
@@ -161,12 +193,31 @@ function getConfig( package, confid )
 	return getData( package, confid ).value
 end
 
---[[ Used for limiting values given ]]
-local function valueCollar( package, data, value )
-	value = Discipline( data, value )
-	if value == nil then return error( "discipline check failed on given config (" .. package .. " / " .. data.id ")" ) end
+--[[
+	Networks the values to all clients
+]]
+function pushUpdate( package, confid, newvalue )
+	if getData( package, confid ).server_only then return end
 
-	return value
+	net.Start( "econf-SetConfig" )
+		net.WriteString( package )
+		net.WriteString( confid )
+		net.WriteType( newvalue )
+	net.Broadcast()
+end
+
+--[[
+	Either inserts or removes from a table config on all clients.
+]]
+function pushTableUpdate( package, confid, newvalue, pushing )
+	if getData( package, confid ).server_only then return end
+
+	net.Start( "econf-TableUpdate" )
+		net.WriteString( package )
+		net.WriteString( confid )
+		net.WriteType( newvalue )
+		net.WriteBit( pushing )
+	net.Broadcast()
 end
 
 --[[
@@ -174,52 +225,82 @@ end
 	This is not used for tables when inserting or removing single values.
 ]]
 function setConfig( package, confid, value, ply )
-	local data = getData( package, confid, value )
+	local data = getData( package, confid )
 	local value = valueCollar( package, data, value )
 
-	if CLIENT then
-		data.value = value
-		return
-	end
+	if data.value == value then return end -- why?
+	if GetType( value ) ~= data.type then return error( "type mismatch @setConfig" ) end
+
+	data.value = value
+	if CLIENT then return end
 
 	if IsValid( ply ) then
 		logChange( package, confid, ply, data.value, value )
 	end
 	saveData( package, confid, value )
 
-	data.value = value
 	if data.on_edit then
 		data.on_edit( ply, value )
 	end
+
+	pushUpdate( package, confid, value )
 end
 
 --[[
 	Inserts a value into the config table.
-	Follows the same format as setConfig for the most part.
 ]]
 function pushConfig( package, confid, value, ply )
-	local data, err = validityCheck( package, confid )
-	if err then return error( err ) end
+	local data = getData( package, confid, value )
+	local value = valueCollar( package, data, value )
 
-	if data.type ~= "table" then return error( "attempting to push value to non-table config (" .. package .. " / " .. confid .. ")" ) end
+	if data.type ~= "table" then return error( "attempting to push value to non-table config (" .. package .. "/" .. confid .. ")" ) end
+	if GetType( value ) ~= "string" then return error( "attempting to push non-string to table config (" .. package .. "/" .. confid .. ")" ) end
 
-	local value, err = valueCollar( package, data, value )
-	if err then return error( err ) end
+	data.value[ #data.value + 1 ] = value
+	if CLIENT then return end
+
+	if IsValid( ply ) then
+		logTableChange( package, confid, ply, value, true )
+	end
+	saveData( package, confid, data.value )
+
+	if data.on_edit then
+		data.on_edit( ply, data.value )
+	end
+
+	pushTableUpdate( package, confid, value, true )
 end
 
 --[[
 	Removes a value from the config table at the specified index.
-	Follows the same format as setConfig for the most part.
+	Key passed must be an int.
 ]]
 function popConfig( package, confid, key, ply )
+	local data = getData( package, confid, value )
+	if GetType( key ) ~= "number" then return error( "invalid key @popConfig" ) end
 
+	local key = math.Clamp( key, 1, #data.value )
+	table.remove( data.value, key )
+
+	if CLIENT then return end
+
+	if IsValid( ply ) then
+		logTableChange( package, confid, ply, value, false )
+	end
+	saveData( package, confid, data.value )
+
+	if data.on_edit then
+		data.on_edit( ply, data.value )
+	end
+
+	pushTableUpdate( package, confid, value, false )
 end
 
 --[[
 	Config setup!
 ]]
 
-function setupConfig( name, generic_canedit, is_upper )
+function setupConfig( name, generic_canedit )
 	if not packages[ name ] then
 		packages[ name ] = { configs = {}, gCanEdit = generic_canedit or GenericCheck }
 	end
@@ -240,8 +321,9 @@ end
 
 if SERVER then
 	util.AddNetworkString( "econf-EditorValues" )
-	util.AddNetworkString( "econf-UpdateConfig" )
+	util.AddNetworkString( "econf-SetConfig" )
 	util.AddNetworkString( "econf-SendConfigPackage" )
+	util.AddNetworkString( "econf-TableUpdate" )
 
 	net.Receive( "econf-SendConfigPackage", function( _, ply )
 		if not ply.econf_packages then ply.econf_packages = {} end
@@ -259,13 +341,65 @@ if SERVER then
 			for name, data in pairs( packages[ pkg ][ "configs" ] ) do
 				if data.server_only then continue end
 
+				i = i + 1
+			end
+
+			net.WriteFloat( i )
+
+			for name, data in pairs( packages[ pkg ][ "configs" ] ) do
+				if data.server_only then continue end
+
 				net.WriteString( name )
 				net.WriteType( data.value )
-
-				i = i + 1
 			end
 		net.Send( ply )
 	end )
-else
 
+	return
 end
+
+--[[ Client menu and etc ]]
+
+hook.Add( "InitPostEntity", "econf load", function()
+	for k, v in pairs( packages ) do
+		net.Start( "econf-SendConfigPackage" )
+			net.WriteString( k )
+		net.SendToServer()
+	end
+end )
+
+net.Receive( "econf-SendConfigPackage", function()
+	local pkg = net.ReadString()
+	if not packages[ pkg ] then return print( "econf: attempted to sync uninitialized config package (" .. pkg .. ")" ) end
+
+	local amt = net.ReadFloat()
+	if amt < 1 then return end
+
+	for i = 1, amt do
+		local name = net.ReadString()
+		local value = net.ReadType()
+
+		local data = getData( pkg, name )
+		if not data then print( "could not set config value (" .. pkg .. "/" .. name .. ")" ) continue end
+		if GetType( value ) ~= data.type then print( "improper data type attempted to be set to config (" .. pkg .. "/" .. name .. ")") continue end
+
+		packages[ pkg ]["configs"][ name ] = value
+	end
+end )
+
+net.Receive( "econf-SetConfig", function()
+	local pkg = net.ReadString()
+	local confid = net.ReadString()
+	local value = net.ReadType()
+
+	setConfig( pkg, confid, value )
+end )
+
+net.Receive( "econf-TableUpdate", function()
+	local pkg = net.ReadString()
+	local confid = net.ReadString()
+	local value = net.ReadType()
+	local pushing = net.ReadBit() == 1
+
+	( pushing and pushConfig or popConfig )( pkg, confid, value )
+end )
